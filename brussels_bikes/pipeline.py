@@ -56,6 +56,8 @@ def load_history(devices):
     history.to_csv(path)
     current_run.add_file_output(path)
 
+    return history
+
 
 @bikes.task
 def load_devices():

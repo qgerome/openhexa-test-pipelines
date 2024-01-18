@@ -29,8 +29,8 @@ def bikes():
 def save_dataset(devices, history):
     dataset = workspace.get_dataset("bikes-in-brussels-6f971d")
     version = dataset.create_version(datetime.now())
-    version.upload(StringIO(devices.to_csv(index=False)), "devices.csv")
-    version.upload(StringIO(history.to_csv(index=False)), "history.csv")
+    version.add_file(StringIO(devices.to_csv(index=False)), "devices.csv")
+    version.add_file(StringIO(history.to_csv(index=False)), "history.csv")
 
 
 @bikes.task
@@ -42,12 +42,13 @@ def load_history(devices):
 
     history = pd.DataFrame()
     for row in devices.itertuples(index=True, name="Device"):
+        current_run.log_debug("Load history for device: " + row.id)
         device_history = fetch_history(
             row.id, now - timedelta(days=2), now - timedelta(days=1)
         )
         device_history["device_id"] = row.id
         history = pd.concat([history, device_history], axis=0)
-
+    current_run.log_debug(f"Database: {workspace.database_url}")
     con = sqlalchemy.create_engine(workspace.database_url)
     history.to_sql("bikes_history", con=con, if_exists="append")
     current_run.add_database_output("history")

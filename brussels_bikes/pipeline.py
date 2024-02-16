@@ -1,59 +1,98 @@
 from datetime import datetime, timedelta
-from io import StringIO
+from io import BytesIO, StringIO
 
 import pandas as pd
 import requests
 import sqlalchemy
-from openhexa.sdk.pipelines import current_run, pipeline
-from openhexa.sdk.workspaces import workspace
+from openhexa.sdk.pipelines import current_run, parameter, pipeline
+from openhexa.sdk.workspaces.workspace import Dataset, workspace
 
 
 def fetch_history(device_id, start_date, end_date):
     csv_data = requests.get(
-        f"https://data.mobility.brussels/bike/api/counts/?request=history&outputFormat=csv&featureID={device_id}&startDate={start_date.strftime('%Y%m%d')}&endDate={end_date.strftime('%Y%m%d')}"
+        f"https://data.mobility.brussels/bike/api/counts/?request=history&outputFormat=csv&featureID={device_id}&startDate={start_date}&endDate={end_date}"
     ).content
 
     return pd.read_csv(StringIO(csv_data.decode("utf-8")))
 
 
 @pipeline("brussels_bikes", name="Bikes in Brussels")
-def bikes():
+@parameter("dataset", name="Dataset", type=Dataset, required=True)
+@parameter("save_in_db", name="Save in DB", type=bool, default=False)
+@parameter(
+    "start_date", name="Start date", type=str, help="Format: YYYYMMDD", required=False
+)
+@parameter(
+    "end_date",
+    name="End date",
+    type=str,
+    help="Format: YYYYMMDD. By default, Yesterday",
+    required=False,
+)
+@parameter(
+    "version_name",
+    name="Version name",
+    type=str,
+    help="By default: now",
+    required=False,
+)
+@parameter("n_days", name="Number of days", type=int, required=False)
+def bikes(dataset, save_in_db, start_date, end_date, version_name, n_days):
     current_run.log_info("Starting pipeline...")
     devices = load_devices()
-    history = load_history(devices)
+    history = load_history(devices, start_date, end_date)
 
-    save_dataset(devices, history)
-
-
-@bikes.task
-def save_dataset(devices, history):
-    dataset = workspace.get_dataset("bikes-in-brussels-6f971d")
-    version = dataset.create_version(datetime.now())
-    version.add_file(StringIO(devices.to_csv(index=False)), "devices.csv")
-    version.add_file(StringIO(history.to_csv(index=False)), "history.csv")
+    save_dataset(version_name, devices, history, dataset)
+    if save_in_db:
+        save_db(devices, history)
 
 
 @bikes.task
-def load_history(devices):
-    now = datetime.now()
-    current_run.log_info(
-        f"Load history from {now - timedelta(days=2)} to {now - timedelta(days=1)}..."
+def save_dataset(version_name, devices, history, dataset):
+    version_name = version_name or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    version = dataset.create_version(version_name)
+    current_run.log_info(f"Save dataset: {dataset.slug} - {version_name}")
+
+    current_run.log_info("Save devices.csv and history.csv")
+
+    # Since we want to save a dataframe, we need to convert it to a csv file and
+    # then convert it to a stream of bytes
+    version.add_file(
+        BytesIO(devices.to_csv(index=False).encode("utf-8")), "devices.csv"
     )
+    version.add_file(
+        BytesIO(history.to_csv(index=False).encode("utf-8")), "history.csv"
+    )
+
+
+@bikes.task
+def save_db(devices, history):
+    current_run.log_info("Save in database...")
+    con = sqlalchemy.create_engine(workspace.database_url)
+    devices.to_sql("bikes_devices", con=con, if_exists="replace")
+    history.to_sql("bikes_history", con=con, if_exists="replace")
+    current_run.add_database_output("bikes_devices")
+    current_run.add_database_output("bikes_history")
+
+
+@bikes.task
+def load_history(devices, start_date, end_date):
+    if not start_date:
+        start_date = (datetime.now() - timedelta(days=2)).strftime("%Y%m%d")
+    if not end_date:
+        end_date = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
+
+    current_run.log_info(f"Load history from {start_date} to {end_date}...")
 
     history = pd.DataFrame()
     for row in devices.itertuples(index=True, name="Device"):
         current_run.log_debug("Load history for device: " + row.id)
-        device_history = fetch_history(
-            row.id, now - timedelta(days=2), now - timedelta(days=1)
-        )
+        device_history = fetch_history(row.id, start_date=start_date, end_date=end_date)
         device_history["device_id"] = row.id
         history = pd.concat([history, device_history], axis=0)
-    current_run.log_debug(f"Database: {workspace.database_url}")
-    con = sqlalchemy.create_engine(workspace.database_url)
-    history.to_sql("bikes_history", con=con, if_exists="append")
-    current_run.add_database_output("history")
 
-    path = f"{workspace.files_path}/history_{now}.csv"
+    current_run.log_info("Save history in workspace FS...")
+    path = f"{workspace.files_path}/history__{start_date}_{end_date}.csv"
     history.to_csv(path)
     current_run.add_file_output(path)
 

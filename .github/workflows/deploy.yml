@@ -1,0 +1,40 @@
+name: Deploy
+
+on:
+  push:
+    paths:
+      - 'brussels_bikes/**'
+      - 'chatgpt/**'
+      - 'timeout_pipeline/**'
+      - 'where_is_fred/**'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Setup openhexa
+        uses: blsq/openhexa-cli-action
+        with:
+          workspace: ${{ secrets.WORKSPACE }}
+          token: ${{ secrets.OH_TOKEN }}
+          install_python: true
+      - name: Identify changed directory
+        id: changed-dir
+        run: |
+          changed_folders=$(git diff --dirstat=files,0 HEAD~1..HEAD . | cut -d % -f 2 | cut -d / -f 1)
+          echo "::set-output name=folder::$changed_folders"
+
+      - name: Push to openhexa pipelines
+        run: |
+          for folder in ${{ steps.changed-dir.outputs.folder }}
+          do
+            if [[ "$folder" == "brussels_bikes" || "$folder" == "chatgpt" || "$folder" == "timeout_pipeline" || "$folder" == "where_is_fred" ]]; then
+              openhexa pipelines push $folder
+            fi
+          done
+        
+

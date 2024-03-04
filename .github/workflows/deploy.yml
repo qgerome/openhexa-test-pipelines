@@ -1,12 +1,17 @@
 name: Deploy
 
+# on:
+#   push:
+#     paths:
+#       - 'brussels_bikes/**'
+#       - 'chatgpt/**'
+#       - 'timeout_pipeline/**'
+#       - 'where_is_fred/**'
+
 on:
   push:
-    paths:
-      - 'brussels_bikes/**'
-      - 'chatgpt/**'
-      - 'timeout_pipeline/**'
-      - 'where_is_fred/**'
+    branches:
+      - main
 
 jobs:
   deploy:

@@ -1,17 +1,15 @@
 name: Deploy
 
-# on:
-#   push:
-#     paths:
-#       - 'brussels_bikes/**'
-#       - 'chatgpt/**'
-#       - 'timeout_pipeline/**'
-#       - 'where_is_fred/**'
+on: 
+  workflow_dispatch:
+    inputs:
+      directory:
+        description: Directory of the pipeline
+        required: true
+      message:
+        description: Commit message
+        required: false
 
-on:
-  push:
-    branches:
-      - main
 
 jobs:
   deploy:
@@ -21,27 +19,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v2
 
+      - uses: actions/setup-python@v2
+        with:
+          python-version: '3.11'
+      
       - name: Setup openhexa
-        uses: blsq/openhexa-cli-action@1.0.2
+        uses: blsq/openhexa-cli-action@1.0.3
         with:
           workspace: ${{ secrets.WORKSPACE }}
           token: ${{ secrets.OH_TOKEN }}
-          install_python: true
-          openhexa_version: main
-      - run: openhexa --version
-      # - name: Identify changed directory
-      #   id: changed-dir
-      #   run: |
-      #     changed_folders=$(git diff --dirstat=files,0 HEAD~1..HEAD . | cut -d % -f 2 | cut -d / -f 1)
-      #     echo "::set-output name=folder::$changed_folders"
-
-      # - name: Push to openhexa pipelines
-      #   run: |
-      #     for folder in ${{ steps.changed-dir.outputs.folder }}
-      #     do
-      #       if [[ "$folder" == "brussels_bikes" || "$folder" == "chatgpt" || "$folder" == "timeout_pipeline" || "$folder" == "where_is_fred" ]]; then
-      #         openhexa pipelines push $folder
-      #       fi
-      #     done
+          openhexa_version: settings
+      - name: Deploy pipeline
+        run: |
+          openhexa pipelines push ${{ github.event.inputs.directory }} 
         
 

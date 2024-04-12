@@ -5,6 +5,7 @@ import pandas as pd
 import requests
 import sqlalchemy
 from openhexa.sdk.pipelines import current_run, parameter, pipeline
+from openhexa.sdk.workspaces.connection import PostgreSQLConnection
 from openhexa.sdk.workspaces.workspace import Dataset, workspace
 
 
@@ -60,8 +61,17 @@ def save_dataset(version_name, devices, history, dataset):
     version.add_file(
         BytesIO(devices.to_csv(index=False).encode("utf-8")), "devices.csv"
     )
-    version.add_file(
-        BytesIO(history.to_csv(index=False).encode("utf-8")), "history.csv"
+
+
+@bikes.task
+def load_history(devices, start_date):
+    now = datetime.now()
+    if start_date:
+        start_date = datetime.strptime(start_date, "%Y%m%d")
+    else:
+        start_date = now - timedelta(days=2)
+    current_run.log_info(
+        f"Load history from {start_date} to {now - timedelta(days=1)}..."
     )
 
 
@@ -73,30 +83,6 @@ def save_db(devices, history):
     history.to_sql("bikes_history", con=con, if_exists="replace")
     current_run.add_database_output("bikes_devices")
     current_run.add_database_output("bikes_history")
-
-
-@bikes.task
-def load_history(devices, start_date, end_date):
-    if not start_date:
-        start_date = (datetime.now() - timedelta(days=2)).strftime("%Y%m%d")
-    if not end_date:
-        end_date = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
-
-    current_run.log_info(f"Load history from {start_date} to {end_date}...")
-
-    history = pd.DataFrame()
-    for row in devices.itertuples(index=True, name="Device"):
-        current_run.log_debug("Load history for device: " + row.id)
-        device_history = fetch_history(row.id, start_date=start_date, end_date=end_date)
-        device_history["device_id"] = row.id
-        history = pd.concat([history, device_history], axis=0)
-
-    current_run.log_info("Save history in workspace FS...")
-    path = f"{workspace.files_path}/history__{start_date}_{end_date}.csv"
-    history.to_csv(path)
-    current_run.add_file_output(path)
-
-    return history
 
 
 @bikes.task
